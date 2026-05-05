@@ -21,6 +21,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -63,6 +64,8 @@ type Config struct {
 	certName  string // instance generated certificate name.
 	serverURL string // instance generated server URL
 }
+
+var envRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
 // LoadConfig loads configuration settings from the configuration file configFile,
 // validates the contents, and populates a map of Config structs with the resulting
@@ -143,20 +146,32 @@ func normaliseConfig(section *ini.Section) {
 	}
 }
 
+// ExpandEnvironmentVariables is a value mappper for ini.v1 that replaces expandEnvironmentVariables
+// in the format ${ENV_VAR} with the content of environment variable ENV_VAR
+//
+// It accepts a string and returns a string. If the environment variable is not found, an empty string is returned.
+func expandEnvironmentVariables(iniValue string) string {
+	myReplaceFunction := func(match string) string {
+		submatch := envRegex.FindStringSubmatch(match)
+		// In case we fail to find the variable name
+		if len(submatch) < 2 {
+			return match
+		}
+		envValue := os.Getenv(submatch[1])
+		return envValue
+	}
+
+	return envRegex.ReplaceAllStringFunc(iniValue, myReplaceFunction)
+}
+
 // LoadInterpolatedConfigFile reads configuration information from the named configuration file and
 // interpolates environment variables to their defined values.
 func loadInterpolatedConfigFile(filename string) (*ini.File, error) {
-	fileData, err := os.ReadFile(filename)
+	f, err := ini.Load(filename)
 	if err != nil {
 		return nil, err
 	}
-
-	// Convert the file content to a string and expand out any environment variables
-	expandedConfig := os.ExpandEnv(string(fileData))
-	f, err := ini.Load([]byte(expandedConfig))
-	if err != nil {
-		return nil, err
-	}
+	f.ValueMapper = expandEnvironmentVariables
 
 	return f, nil
 }
