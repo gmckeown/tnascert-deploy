@@ -46,7 +46,7 @@ type Config struct {
 	DeleteOldCerts      bool   `ini:"delete_old_certs"`                                   // Whether to remove old certificates
 	StrictBasenameMatch bool   `ini:"strict_basename_match"`                              // Whether to use a strict basename match when deleting certs
 	FullChainPath       string `ini:"full_chain_path" validate:"required"`                // Path to full_chain.pem
-	Port                uint64 `ini:"port" validate:"min=1,max=65535"`                    // TrueNAS API endpoint port
+	Port                uint64 `ini:"port" validate:"port"`                               // TrueNAS API endpoint port
 	Protocol            string `ini:"protocol" validate:"oneof=ws wss http https"`        // Websocket/REST protocol
 	PrivateKeyPath      string `ini:"private_key_path" validate:"required"`               // Path to private_key.pem
 	TlsSkipVerify       bool   `ini:"tls_skip_verify"`                                    // Strict SSL cert verification of the endpoint
