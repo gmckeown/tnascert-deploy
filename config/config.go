@@ -85,15 +85,15 @@ func LoadConfig(configFile string) (map[string]*Config, error) {
 			continue
 		}
 
+		// Handle any keys that have been deprecated
 		handleDeprecatedKeys(section)
+		// Apply any needed data transformation on the config prior to validation
+		normaliseConfig(section)
 
 		c := newDefaultConfig()
 		if err := section.StrictMapTo(&c); err != nil {
 			return nil, err
 		}
-
-		// Apply any needed data transformation on the config prior to validation
-		normaliseConfig(&c)
 
 		// Validate against struct tags using validator
 		if err := validate.Struct(&c); err != nil {
@@ -132,10 +132,15 @@ func (c *Config) ServerURL() string {
 }
 
 // normaliseConfig applies data transformations to user-supplied configuration to standardise the format.
-func normaliseConfig(c *Config) {
+func normaliseConfig(section *ini.Section) {
 	// Lower-case some config items to make them effectively case-insensitive
-	c.Protocol = strings.ToLower(c.Protocol)
-	c.ClientApi = strings.ToLower(c.ClientApi)
+	targetKeys := []string{"protocol", "client_api"}
+	for _, keyName := range targetKeys {
+		if section.HasKey(keyName) {
+			curVal := section.Key(keyName).String()
+			section.Key(keyName).SetValue(strings.ToLower(curVal))
+		}
+	}
 }
 
 // LoadInterpolatedConfigFile reads configuration information from the named configuration file and
