@@ -15,6 +15,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+// Package config handles the parsing and validation of TrueNAS certificate deployment configurations.
 package config
 
 import (
@@ -39,32 +40,37 @@ const (
 
 type Config struct {
 	ApiKey              string `ini:"api_key"`                                            // TrueNAS 64 byte API Key
-	CertBasename        string `ini:"cert_basename" validate:"required"`                  // basename for cert naming in TrueNAS
-	ClientApi           string `ini:"client_api" validate:"required,oneof=wsapi restapi"` // client type, 'wsapi' (default) or restapi
+	CertBasename        string `ini:"cert_basename" validate:"required"`                  // Basename for cert naming in TrueNAS
+	ClientApi           string `ini:"client_api" validate:"required,oneof=wsapi restapi"` // Client type, 'wsapi' (default) or restapi
 	ConnectHost         string `ini:"connect_host" validate:"required,hostname|fqdn|ip"`  // TrueNAS hostname
-	DeleteOldCerts      bool   `ini:"delete_old_certs"`                                   // whether to remove old certificates
-	StrictBasenameMatch bool   `ini:"strict_basename_match"`                              // whether to use a strict basename match when deleting certs
-	FullChainPath       string `ini:"full_chain_path" validate:"required"`                // path to full_chain.pem
+	DeleteOldCerts      bool   `ini:"delete_old_certs"`                                   // Whether to remove old certificates
+	StrictBasenameMatch bool   `ini:"strict_basename_match"`                              // Whether to use a strict basename match when deleting certs
+	FullChainPath       string `ini:"full_chain_path" validate:"required"`                // Path to full_chain.pem
 	Port                uint64 `ini:"port" validate:"min=1,max=65535"`                    // TrueNAS API endpoint port
-	Protocol            string `ini:"protocol" validate:"oneof=ws wss http https"`        // websocket/REST protocol
-	PrivateKeyPath      string `ini:"private_key_path" validate:"required"`               // path to private_key.pem
-	TlsSkipVerify       bool   `ini:"tls_skip_verify"`                                    // strict SSL cert verification of the endpoint
-	AddAsUiCertificate  bool   `ini:"add_as_ui_certificate"`                              // install as the active UI certificate if true
-	AddAsFTPCertificate bool   `ini:"add_as_ftp_certificate"`                             // install as the active FTP service certificate if true
-	AddAsAppCertificate bool   `ini:"add_as_app_certificate"`                             // install as the active APP service certificate if true
+	Protocol            string `ini:"protocol" validate:"oneof=ws wss http https"`        // Websocket/REST protocol
+	PrivateKeyPath      string `ini:"private_key_path" validate:"required"`               // Path to private_key.pem
+	TlsSkipVerify       bool   `ini:"tls_skip_verify"`                                    // Strict SSL cert verification of the endpoint
+	AddAsUiCertificate  bool   `ini:"add_as_ui_certificate"`                              // Install as the active UI certificate if true
+	AddAsFTPCertificate bool   `ini:"add_as_ftp_certificate"`                             // Install as the active FTP service certificate if true
+	AddAsAppCertificate bool   `ini:"add_as_app_certificate"`                             // Install as the active APP service certificate if true
 	// Note: AppList could be defined as a slice (Applist []string) and ini.v1 will automatically convert the comma-separated values
-	AppList        string `ini:"app_list"`                                 // comma separated list of Apps to deploy the certificate too.
-	TimeoutSeconds int64  `ini:"timeoutSeconds" validate:"required,min=1"` // the number of seconds after which the truenas client calls fail (TODO: Should be timeout_seconds)
-	Debug          bool   `ini:"debug"`                                    // debug logging if true
-	Username       string `ini:"username"`                                 // an admin user name
-	Password       string `ini:"password"`                                 // admin users password
+	AppList        string `ini:"app_list"`                                  // Comma separated list of Apps to deploy the certificate too.
+	TimeoutSeconds int64  `ini:"timeout_seconds" validate:"required,min=1"` // The number of seconds after which the truenas client calls fail
+	Debug          bool   `ini:"debug"`                                     // Debug logging if true
+	Username       string `ini:"username"`                                  // An admin user name for the TrueNAS target
+	Password       string `ini:"password"`                                  // The TrueNAS target Admin user's password
 
 	certName  string // instance generated certificate name.
 	serverURL string // instance generated server URL
 }
 
+// LoadConfig loads configuration settings from the configuration file configFile,
+// validates the contents, and populates a map of Config structs with the resulting
+// values.
+//
+// The returned map contains one key per configuration file section.
 func LoadConfig(configFile string) (map[string]*Config, error) {
-	var cfgList = make(map[string]*Config)
+	cfgList := make(map[string]*Config)
 
 	f, err := loadInterpolatedConfigFile(configFile)
 	if err != nil {
@@ -78,13 +84,16 @@ func LoadConfig(configFile string) (map[string]*Config, error) {
 		if name == ini.DefaultSection {
 			continue
 		}
-		c := NewDefaultConfig()
+
+		handleDeprecatedKeys(section)
+
+		c := newDefaultConfig()
 		if err := section.StrictMapTo(&c); err != nil {
 			return nil, err
 		}
 
 		// Apply any needed data transformation on the config prior to validation
-		c.NormaliseConfig()
+		normaliseConfig(&c)
 
 		// Validate against struct tags using validator
 		if err := validate.Struct(&c); err != nil {
@@ -102,6 +111,9 @@ func LoadConfig(configFile string) (map[string]*Config, error) {
 	return cfgList, nil
 }
 
+// CertName builds a certificate name using the supplied base name and the current date/time.
+//
+// Returns a string with the constructed certificate name.
 func (c *Config) CertName() string {
 	if c.certName == "" {
 		c.certName = c.CertBasename + strftime.Format("-%Y-%m-%d-%s", time.Now())
@@ -109,6 +121,9 @@ func (c *Config) CertName() string {
 	return c.certName
 }
 
+// ServerURL builds a URL for the server API endpoint by combining the protocol, hostname, and port.
+//
+// Returns a string with the constructed URL.
 func (c *Config) ServerURL() string {
 	if c.serverURL == "" {
 		c.serverURL = fmt.Sprintf("%s://%s:%d", c.Protocol, c.ConnectHost, c.Port)
@@ -116,12 +131,15 @@ func (c *Config) ServerURL() string {
 	return c.serverURL
 }
 
-func (c *Config) NormaliseConfig() {
+// normaliseConfig applies data transformations to user-supplied configuration to standardise the format.
+func normaliseConfig(c *Config) {
 	// Lower-case some config items to make them effectively case-insensitive
 	c.Protocol = strings.ToLower(c.Protocol)
 	c.ClientApi = strings.ToLower(c.ClientApi)
 }
 
+// LoadInterpolatedConfigFile reads configuration information from the named configuration file and
+// interpolates environment variables to their defined values.
 func loadInterpolatedConfigFile(filename string) (*ini.File, error) {
 	fileData, err := os.ReadFile(filename)
 	if err != nil {
@@ -138,13 +156,17 @@ func loadInterpolatedConfigFile(filename string) (*ini.File, error) {
 	return f, nil
 }
 
+// CheckAuthConfig checks that authentication information has been provided and warns
+// if both API key and username/password have been defined.
+//
+// An error is returned if no authentication information has been specified.
 func checkAuthConfig(username string, password string, apiKey string) error {
 	hasApiKey := apiKey != ""
 	hasUserCreds := username != "" && password != ""
 
 	// We should have *either* API Key *or* username/password
 	if !hasApiKey && !hasUserCreds {
-		return fmt.Errorf("no authentication is defined: You must provide either api_key OR username and password")
+		return fmt.Errorf("no authentication is defined: you must provide either api_key OR username and password")
 	}
 
 	// Warning if all three are provided
@@ -155,7 +177,21 @@ func checkAuthConfig(username string, password string, apiKey string) error {
 	return nil
 }
 
-func NewDefaultConfig() Config {
+// HandleDeprecatedKeys provides logic to handle any config file keys that have been deprecated.
+// If the key has a replacement (i.e. it is renamed) then we map that here.
+// Warnings are displayed for any deprecated keys in the user's configuration file.
+func handleDeprecatedKeys(section *ini.Section) {
+	if section.HasKey("timeoutSeconds") {
+		fmt.Printf("WARNING: Section '%s' uses the deprecated key timeoutSeconds. Please update your config to use timeout_seconds instead.\n", section.Name())
+		if !section.HasKey("timeout_seconds") {
+			oldValue := section.Key("timeoutSeconds").Value()
+			section.Key("timeout_seconds").SetValue(oldValue)
+		}
+	}
+}
+
+// newDefaultConfig returns an instance of Config prepopulated with default values.
+func newDefaultConfig() Config {
 	return Config{
 		AddAsAppCertificate: false,
 		AddAsFTPCertificate: false,
